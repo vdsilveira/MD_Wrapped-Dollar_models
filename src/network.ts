@@ -35,6 +35,8 @@ export interface NetworkState {
   wdollarAccountId?: string;
   wdollarShieldedAddress?: string;
   wdollarShieldedDomain?: string;
+  wdollarAgentAddress?: string;
+  wdollarAgentAccountId?: string;
 }
 
 export const STATE_FILE_NAME = '.midnight-state.json';
@@ -301,6 +303,42 @@ export function getWdollarShielded(opts: FsOptions = {}): { address: string; dom
     return { address: state.wdollarShieldedAddress, domain: state.wdollarShieldedDomain };
   }
   return null;
+}
+
+export function saveWdollarAgentAddress(address: string, opts: FsOptions = {}): void {
+  const cwd = opts.cwd ?? process.cwd();
+  const existing = loadState({ cwd });
+  const next: NetworkState = existing ?? {
+    version: STATE_VERSION,
+    activeNetwork: 'undeployed',
+    wallets: {},
+    deployments: {},
+  };
+  next.wdollarAgentAddress = address;
+  saveState(next, { cwd });
+}
+
+export function getWdollarAgentAddress(opts: FsOptions = {}): string | null {
+  const state = loadState(opts);
+  return state?.wdollarAgentAddress ?? null;
+}
+
+export function saveWdollarAgentAccountId(accountId: string, opts: FsOptions = {}): void {
+  const cwd = opts.cwd ?? process.cwd();
+  const existing = loadState({ cwd });
+  const next: NetworkState = existing ?? {
+    version: STATE_VERSION,
+    activeNetwork: 'undeployed',
+    wallets: {},
+    deployments: {},
+  };
+  next.wdollarAgentAccountId = accountId;
+  saveState(next, { cwd });
+}
+
+export function getWdollarAgentAccountId(opts: FsOptions = {}): string | null {
+  const state = loadState(opts);
+  return state?.wdollarAgentAccountId ?? null;
 }
 
 export function setActiveNetwork(network: NetworkId, opts: FsOptions = {}): void {

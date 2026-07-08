@@ -1,0 +1,177 @@
+// Wrapped  Dollar for Agents (WDA) — Public-receipt token for x402 payments
+// Authenticated via witness: sender derived from secret key, not a parameter.
+
+pragma language_version >= 0.23.0;
+
+import CompactStandardLibrary;
+import "../node_modules/@openzeppelin/compact-contracts/access/Ownable"
+  prefix Ownable_;
+import "../node_modules/@openzeppelin/compact-contracts/security/Pausable"
+  prefix Pausable_;
+import "../node_modules/@openzeppelin/compact-contracts/utils/Utils"
+  prefix Utils_;
+
+struct Receipt {
+  to: Either<Bytes<32>, ContractAddress>;
+  amount: Uint<64>;
+  requestNonce: Bytes<32>;
+}
+
+struct TokenInfo {
+  name: Opaque<"string">;
+  symbol: Opaque<"string">;
+  decimals: Uint<8>;
+  totalSupply: Uint<64>;
+  owner: Either<Bytes<32>, ContractAddress>;
+  isPaused: Boolean;
+}
+
+ledger _tokenName: Opaque<"string">;
+ledger _tokenSymbol: Opaque<"string">;
+ledger _tokenDecimals: Uint<8>;
+ledger balances: Map<Either<Bytes<32>, ContractAddress>, Uint<64>>;
+ledger receipts: Map<Uint<64>, Receipt>;
+ledger nextReceiptId: Uint<64>;
+ledger _totalSupply: Uint<64>;
+
+witness wit_WDASK(): Bytes<32>;
+
+// ─── Constructor ────────────────────────────────────────────
+
+constructor(
+  _name: Opaque<"string">,
+  _symbol: Opaque<"string">,
+  _decimals: Uint<8>,
+  _initOwner: Either<Bytes<32>, ContractAddress>,
+) {
+  Ownable_initialize(_initOwner);
+  _tokenName = disclose(_name);
+  _tokenSymbol = disclose(_symbol);
+  _tokenDecimals = disclose(_decimals);
+  nextReceiptId = 0;
+  _totalSupply = disclose(0);
+}
+
+// ─── Internal ───────────────────────────────────────────────
+
+circuit _computeAccountId(): Bytes<32> {
+  return persistentHash<Vector<1, Bytes<32>>>([wit_WDASK()]);
+}
+
+circuit _sender(): Either<Bytes<32>, ContractAddress> {
+  return left<Bytes<32>, ContractAddress>(_computeAccountId());
+}
+
+// ─── Queries ────────────────────────────────────────────────
+
+export circuit name(): Opaque<"string"> {
+  return _tokenName;
+}
+
+export circuit symbol(): Opaque<"string"> {
+  return _tokenSymbol;
+}
+
+export circuit decimals(): Uint<8> {
+  return _tokenDecimals;
+}
+
+export circuit totalSupply(): Uint<64> {
+  return _totalSupply;
+}
+
+export circuit balanceOf(account: Either<Bytes<32>, ContractAddress>): Uint<64> {
+  const canonAcct = Utils_canonicalize<Bytes<32>, ContractAddress>(account);
+  if (!balances.member(disclose(canonAcct))) {
+    return 0;
+  }
+  return balances.lookup(disclose(canonAcct));
+}
+
+export circuit receipt(id: Uint<64>): Receipt {
+  return receipts.lookup(disclose(id));
+}
+
+export circuit owner(): Either<Bytes<32>, ContractAddress> {
+  return Ownable_owner();
+}
+
+export circuit tokenInfo(): TokenInfo {
+  return TokenInfo {
+    name: _tokenName,
+    symbol: _tokenSymbol,
+    decimals: _tokenDecimals,
+    totalSupply: _totalSupply,
+    owner: Ownable_owner(),
+    isPaused: Pausable_isPaused(),
+  };
+}
+
+// ─── Pause (owner only) ─────────────────────────────────────
+
+export circuit pause(): [] {
+  Ownable_assertOnlyOwner();
+  Pausable__pause();
+}
+
+export circuit unpause(): [] {
+  Ownable_assertOnlyOwner();
+  Pausable__unpause();
+}
+
+// ─── Mint (owner only) ──────────────────────────────────────
+
+export circuit mint(
+  to: Either<Bytes<32>, ContractAddress>,
+  amount: Uint<64>,
+): Uint<8> {
+  Ownable_assertOnlyOwner();
+  Pausable_assertNotPaused();
+  const canonTo = Utils_canonicalize<Bytes<32>, ContractAddress>(to);
+  const currentBal = balanceOf(canonTo);
+  balances.insert(disclose(canonTo), disclose((currentBal + amount) as Uint<64>));
+  _totalSupply = disclose((_totalSupply + amount) as Uint<64>);
+  return 0;
+}
+
+// ─── Burn from account (owner only) ─────────────────────────
+
+export circuit burnFrom(
+  account: Either<Bytes<32>, ContractAddress>,
+  amount: Uint<64>,
+): Uint<8> {
+  Ownable_assertOnlyOwner();
+  Pausable_assertNotPaused();
+  const canonAcct = Utils_canonicalize<Bytes<32>, ContractAddress>(account);
+  const currentBal = balanceOf(canonAcct);
+  assert(currentBal >= amount, "Insufficient balance");
+  balances.insert(disclose(canonAcct), disclose((currentBal - amount) as Uint<64>));
+  _totalSupply = disclose((_totalSupply - amount) as Uint<64>);
+  return 0;
+}
+
+// ─── Transfer with receipt (authenticated) ──────────────────
+
+export circuit transferWithReceipt(
+  to: Either<Bytes<32>, ContractAddress>,
+  amount: Uint<64>,
+  requestNonce: Bytes<32>,
+): Uint<64> {
+  Pausable_assertNotPaused();
+  const sender = _sender();
+  const canonSender = Utils_canonicalize<Bytes<32>, ContractAddress>(sender);
+  const canonTo = Utils_canonicalize<Bytes<32>, ContractAddress>(to);
+
+  const senderBal = balanceOf(canonSender);
+  assert(senderBal >= amount, "Insufficient sender balance");
+  const newSenderBal = (senderBal - amount) as Uint<64>;
+  const toBal = balanceOf(canonTo);
+  const newToBal = (toBal + amount) as Uint<64>;
+  balances.insert(disclose(canonSender), disclose(newSenderBal));
+  balances.insert(disclose(canonTo), disclose(newToBal));
+
+  const receiptId = nextReceiptId;
+  receipts.insert(disclose(receiptId), disclose(Receipt { to: canonTo, amount: amount, requestNonce: requestNonce }));
+  nextReceiptId = receiptId + 1 as Uint<64>;
+  return receiptId;
+}
