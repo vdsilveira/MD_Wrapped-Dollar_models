@@ -6,11 +6,14 @@
   "author": "",
   "license": "MIT",
   "scripts": {
-    "compile": "compact compile contracts/hello-world.compact contracts/managed/hello-world",
+    "compile": "compact compile contracts/wdollar.compact contracts/managed/wdollar",
+    "compile:shielded": "compact compile contracts/wdollar-shielded.compact contracts/managed/wdollar-shielded",
     "build": "npx tsc --noEmit || true",
     "setup": "npx tsx src/setup.ts",
     "deploy": "npx tsx src/deploy.ts",
+    "deploy:shielded": "npx tsx src/deploy-shielded.ts",
     "cli": "npx tsx src/cli.ts",
+    "cli:shielded": "npx tsx src/cli-shielded.ts",
     "check-balance": "npx tsx src/check-balance.ts",
     "network": "npx tsx src/network.ts",
     "proof-server:start": "docker compose up -d",
@@ -21,7 +24,6 @@
   },
   "dependencies": {
     "@midnight-ntwrk/compact-js": "2.5.0",
-    "rxjs": "^7.8.2",
     "@midnight-ntwrk/compact-runtime": "0.16.0",
     "@midnight-ntwrk/ledger-v8": "8.0.3",
     "@midnight-ntwrk/midnight-js-contracts": "4.0.4",
@@ -37,6 +39,8 @@
     "@midnight-ntwrk/wallet-sdk-hd": "3.0.1",
     "@midnight-ntwrk/wallet-sdk-shielded": "2.1.0",
     "@midnight-ntwrk/wallet-sdk-unshielded-wallet": "2.1.0",
+    "@openzeppelin/compact-contracts": "^0.2.0",
+    "rxjs": "^7.8.2",
     "ws": "^8.20.0"
   },
   "devDependencies": {
@@ -48,5 +52,10 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "keywords": ["midnight", "blockchain", "zero-knowledge", "privacy"]
+  "keywords": [
+    "midnight",
+    "blockchain",
+    "zero-knowledge",
+    "privacy"
+  ]
 }

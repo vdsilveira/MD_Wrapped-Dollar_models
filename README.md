@@ -15,7 +15,7 @@ npm run test:e2e
 `npm run setup` runs end-to-end with no prompts:
 
 1. `docker compose up -d --wait` — starts a local Midnight devnet (node, indexer, proof-server) and blocks until all three pass their healthchecks.
-2. `npm run compile` — compiles `contracts/hello-world.compact` to `contracts/managed/hello-world/`.
+2. `npm run compile` — compiles `contracts/wdollar.compact` to `contracts/managed/wdollar/`.
 3. `npm run deploy` — derives the genesis-seed wallet (NIGHT pre-minted), registers UTXOs for DUST generation, deploys the contract, writes `.midnight-state.json`.
 
 `npm run test:e2e` reconnects to the deployed contract and reads its ledger state. Exits 0 if the contract is live and indexable.
@@ -159,7 +159,7 @@ generated state.
 ```
 deploytest/
 ├── contracts/
-│   └── hello-world.compact     # Compact source
+│   └── wdollar.compact         # Compact source
 ├── scripts/
 │   └── e2e-check.ts            # smoke + read-back
 ├── src/

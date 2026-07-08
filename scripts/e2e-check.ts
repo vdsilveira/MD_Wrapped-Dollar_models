@@ -17,6 +17,7 @@ import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config
 import { resolveNetwork, getOrCreateSeed, getDeployment } from '../src/network';
 import { createWallet, persistWalletState } from '../src/wallet';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
+import { persistentHash, CompactTypeVector, Bytes32Descriptor } from '@midnight-ntwrk/compact-runtime';
 
 // @ts-expect-error wallet sync requires WebSocket
 globalThis.WebSocket = WebSocket;
@@ -48,12 +49,22 @@ async function main() {
 
   // 2. Build wallet and providers
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'hello-world');
+  const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'wdollar');
   const contractPath = path.join(zkConfigPath, 'contract', 'index.js');
   if (!fs.existsSync(contractPath)) fail('Compiled contract missing — run `npm run compile`.');
-  const HelloWorld = await import(pathToFileURL(contractPath).href);
-  const compiledContract = CompiledContract.make('hello-world', HelloWorld.Contract).pipe(
-    CompiledContract.withVacantWitnesses,
+  const Wdollar = await import(pathToFileURL(contractPath).href);
+
+  const witnesses = {
+    wit_OwnableSK(context: any) {
+      return [context.privateState, Uint8Array.from(context.privateState.secretKey)];
+    },
+    wit_FungibleTokenSK(context: any) {
+      return [context.privateState, Uint8Array.from(context.privateState.secretKey)];
+    },
+  };
+
+  const compiledContract = CompiledContract.make('wdollar', Wdollar.Contract).pipe(
+    CompiledContract.withWitnesses(witnesses),
     CompiledContract.withCompiledFileAssets(zkConfigPath),
   );
 
@@ -77,7 +88,7 @@ async function main() {
 
   const providers = {
     privateStateProvider: levelPrivateStateProvider({
-      privateStateStoreName: 'hello-world-state',
+      privateStateStoreName: 'wdollar-state',
       accountId: walletCtx.unshieldedKeystore.getBech32Address().toString(),
       // SDK requires ≥16 chars. e2e-check is read-only so we don't expose
       // the env-var override here — match the deploy script's local-devnet default.
@@ -95,6 +106,7 @@ async function main() {
     await findDeployedContract(providers, {
       contractAddress: deployment.address,
       compiledContract: compiledContract as any,
+      privateStateId: 'wdollar-state',
     });
   } catch (err: any) {
     await walletCtx.wallet.stop();

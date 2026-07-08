@@ -1,0 +1,106 @@
+// MyContract.compact
+
+pragma language_version >= 0.21.0;
+
+import CompactStandardLibrary;
+import "../node_modules/@openzeppelin/compact-contracts/access/Ownable"
+  prefix Ownable_;
+import "../node_modules/@openzeppelin/compact-contracts/security/Pausable"
+  prefix Pausable_;
+import "../node_modules/@openzeppelin/compact-contracts/token/FungibleToken"
+  prefix FungibleToken_;
+
+constructor(
+  _name: Opaque<"string">,
+  _symbol: Opaque<"string">,
+  _decimals: Uint<8>,
+  _recipient: Either<Bytes<32>, ContractAddress>,
+  _amount: Uint<128>,
+  _initOwner: Either<Bytes<32>, ContractAddress>,
+) {
+  Ownable_initialize(_initOwner);
+  FungibleToken_initialize(_name, _symbol, _decimals);
+  FungibleToken__mint(_recipient, _amount);
+}
+
+/** IFungibleToken */
+
+export circuit name(): Opaque<"string"> {
+  return FungibleToken_name();
+}
+
+export circuit symbol(): Opaque<"string"> {
+  return FungibleToken_symbol();
+}
+
+export circuit decimals(): Uint<8> {
+  return FungibleToken_decimals();
+}
+
+export circuit totalSupply(): Uint<128> {
+  return FungibleToken_totalSupply();
+}
+
+export circuit balanceOf(account: Either<Bytes<32>, ContractAddress>): Uint<128> {
+  return FungibleToken_balanceOf(account);
+}
+
+export circuit allowance(
+  owner: Either<Bytes<32>, ContractAddress>,
+  spender: Either<Bytes<32>, ContractAddress>
+): Uint<128> {
+  return FungibleToken_allowance(owner, spender);
+}
+
+export circuit transfer(
+  to: Either<Bytes<32>, ContractAddress>,
+  value: Uint<128>,
+): Boolean {
+  Pausable_assertNotPaused();
+  return FungibleToken_transfer(to, value);
+}
+
+export circuit transferFrom(
+  fromAddress: Either<Bytes<32>, ContractAddress>,
+  to: Either<Bytes<32>, ContractAddress>,
+  value: Uint<128>
+): Boolean {
+  Pausable_assertNotPaused();
+  return FungibleToken_transferFrom(fromAddress, to, value);
+}
+
+export circuit approve(spender: Either<Bytes<32>, ContractAddress>, value: Uint<128>): Boolean {
+  Pausable_assertNotPaused();
+  return FungibleToken_approve(spender, value);
+}
+
+export circuit mint(to: Either<Bytes<32>, ContractAddress>, value: Uint<128>): [] {
+  Ownable_assertOnlyOwner();
+  FungibleToken__mint(to, value);
+}
+
+/** IOwnable */
+
+export circuit owner(): Either<Bytes<32>, ContractAddress> {
+  return Ownable_owner();
+}
+
+export circuit transferOwnership(newOwner: Either<Bytes<32>, ContractAddress>): [] {
+  return Ownable_transferOwnership(newOwner);
+}
+
+// export circuit renounceOwnership(): [] {
+//   return Ownable_renounceOwnership();
+// }
+
+/** IPausable */
+
+export circuit pause(): [] {
+  Ownable_assertOnlyOwner();
+  Pausable__pause();
+}
+
+export circuit unpause(): [] {
+  Ownable_assertOnlyOwner();
+  Pausable__unpause();
+}

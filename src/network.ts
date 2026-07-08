@@ -32,6 +32,9 @@ export interface NetworkState {
   activeNetwork: NetworkId;
   wallets: Partial<Record<NetworkId, { seed: string; createdAt: string }>>;
   deployments: Partial<Record<NetworkId, DeploymentRecord>>;
+  wdollarAccountId?: string;
+  wdollarShieldedAddress?: string;
+  wdollarShieldedDomain?: string;
 }
 
 export const STATE_FILE_NAME = '.midnight-state.json';
@@ -254,6 +257,50 @@ export function recordDeployment(
     [network]: { address, deployer, deployedAt: new Date().toISOString() },
   };
   saveState(next, { cwd });
+}
+
+export function saveWdollarAccountId(accountId: string, opts: FsOptions = {}): void {
+  const cwd = opts.cwd ?? process.cwd();
+  const existing = loadState({ cwd });
+  const next: NetworkState = existing ?? {
+    version: STATE_VERSION,
+    activeNetwork: 'undeployed',
+    wallets: {},
+    deployments: {},
+  };
+  next.wdollarAccountId = accountId;
+  saveState(next, { cwd });
+}
+
+export function getWdollarAccountId(opts: FsOptions = {}): string | null {
+  const state = loadState(opts);
+  return state?.wdollarAccountId ?? null;
+}
+
+export function saveWdollarShielded(
+  address: string,
+  domain: string,
+  opts: FsOptions = {},
+): void {
+  const cwd = opts.cwd ?? process.cwd();
+  const existing = loadState({ cwd });
+  const next: NetworkState = existing ?? {
+    version: STATE_VERSION,
+    activeNetwork: 'undeployed',
+    wallets: {},
+    deployments: {},
+  };
+  next.wdollarShieldedAddress = address;
+  next.wdollarShieldedDomain = domain;
+  saveState(next, { cwd });
+}
+
+export function getWdollarShielded(opts: FsOptions = {}): { address: string; domain: string } | null {
+  const state = loadState(opts);
+  if (state?.wdollarShieldedAddress && state?.wdollarShieldedDomain) {
+    return { address: state.wdollarShieldedAddress, domain: state.wdollarShieldedDomain };
+  }
+  return null;
 }
 
 export function setActiveNetwork(network: NetworkId, opts: FsOptions = {}): void {

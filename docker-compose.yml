@@ -61,9 +61,10 @@ services:
     # receiving /prove, with no log output, no memory growth, and no progress.
     # The same image runs fine on x86_64 Linux. 8.0.3 fixed this; never bump
     # downward into the 7.x line without re-validating on macOS arm64.
+  
     image: midnightntwrk/proof-server:8.0.3
     container_name: deploytest-proof-server
-    command: ["midnight-proof-server -v"]
+    command: ["midnight-proof-server", "-v"]  # <--- Separado por vírgula
     ports:
       - "6300:6300"
     environment:

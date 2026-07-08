@@ -58,3 +58,10 @@ temp/
 
 # Midnight wallet sync state (per-network serialized wallet state cache)
 .midnight-wallet-state/
+
+# LevelDB private state database
+midnight-level-db/
+
+# Opencode development config (agents, skills, settings)
+opencode.json
+.opencode/

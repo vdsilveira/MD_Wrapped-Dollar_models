@@ -5,13 +5,14 @@ import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
 import { Buffer } from 'buffer';
+import { getRandomValues } from 'node:crypto';
 
 import { findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { resolveNetwork, getOrCreateSeed, getDeployment, getWdollarAccountId } from './network';
+import { resolveNetwork, getOrCreateSeed, getWdollarShielded } from './network';
 import { createWallet, persistWalletState, unshieldedToken, type WalletContext } from './wallet';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
 
@@ -21,32 +22,29 @@ const { network, config: networkConfig } = resolveNetwork();
 const SEED = getOrCreateSeed(network);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'wdollar');
+const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'wdollar-shielded');
 
 const contractPath = path.join(zkConfigPath, 'contract', 'index.js');
 
 if (!fs.existsSync(contractPath)) {
-  console.error('\nContract not compiled! Run: npm run compile\n');
+  console.error('\nContract not compiled! Run: npm run compile:shielded\n');
   process.exit(1);
 }
 
-const Wdollar = await import(pathToFileURL(contractPath).href);
+const WdollarShielded = await import(pathToFileURL(contractPath).href);
 
 const witnesses = {
   wit_OwnableSK(context: any) {
     return [context.privateState, Uint8Array.from(context.privateState.secretKey)];
   },
-  wit_FungibleTokenSK(context: any) {
-    return [context.privateState, Uint8Array.from(context.privateState.secretKey)];
-  },
 };
 
-const compiledContract = CompiledContract.make('wdollar', Wdollar.Contract).pipe(
+const compiledContract = CompiledContract.make('wdollar-shielded', WdollarShielded.Contract).pipe(
   CompiledContract.withWitnesses(witnesses),
   CompiledContract.withCompiledFileAssets(zkConfigPath),
 );
 
-function parseAddress(input: string): {
+function parseEitherAddress(input: string): {
   is_left: boolean;
   left: Uint8Array;
   right: { bytes: Uint8Array };
@@ -59,21 +57,43 @@ function parseAddress(input: string): {
     };
   }
   throw new Error(
-    'Invalid address. Use a 64-character hex string (account ID).\n' +
-      '  Get yours via option "1. My Account ID" in the CLI.',
+    'Invalid input. Use a 64-character hex string (account ID).\n',
   );
 }
 
-function formatEither(v: { is_left: boolean; left: Uint8Array; right: { bytes: Uint8Array } }): string {
+function parseCoinPublicKey(hex: string): {
+  is_left: boolean;
+  left: { bytes: Uint8Array };
+  right: { bytes: Uint8Array };
+} {
+  if (/^[0-9a-fA-F]{64}$/.test(hex)) {
+    return {
+      is_left: true,
+      left: { bytes: Buffer.from(hex, 'hex') },
+      right: { bytes: new Uint8Array(32) },
+    };
+  }
+  throw new Error(
+    'Invalid coin public key. Expected 64 hex chars.\n' +
+      '  Get yours via option "1. My Coin Public Key".',
+  );
+}
+
+function formatEither(v: { is_left: boolean; left: any; right: { bytes: Uint8Array } }): string {
   if (v.is_left) {
-    return Buffer.from(v.left).toString('hex');
+    if (v.left instanceof Uint8Array) {
+      return Buffer.from(v.left).toString('hex');
+    }
+    if (v.left && v.left.bytes instanceof Uint8Array) {
+      return Buffer.from(v.left.bytes).toString('hex');
+    }
+    return String(v.left);
   }
   return `ContractAddress(${Buffer.from(v.right.bytes).toString('hex')})`;
 }
 
 async function createProviders(walletCtx: WalletContext) {
   const privateStatePassword = process.env.PRIVATE_STATE_PASSWORD?.trim() || 'Local-Devnet-Development-Placeholder-1';
-
   const state = await walletCtx.wallet.waitForSyncedState();
 
   const walletProvider = {
@@ -98,7 +118,7 @@ async function createProviders(walletCtx: WalletContext) {
 
   return {
     privateStateProvider: levelPrivateStateProvider({
-      privateStateStoreName: 'wdollar-state',
+      privateStateStoreName: 'wdollar-shielded-state',
       accountId,
       privateStoragePasswordProvider: () => privateStatePassword,
     }),
@@ -112,23 +132,18 @@ async function createProviders(walletCtx: WalletContext) {
 
 async function main() {
   console.log('\n╔══════════════════════════════════════════════════════════════╗');
-  console.log('║               WDollar CLI                                    ║');
+  console.log('║          WDollar Shielded CLI                               ║');
   console.log('╚══════════════════════════════════════════════════════════════╝\n');
 
   const rl = createInterface({ input: stdin, output: stdout });
 
-  const deployment = getDeployment(network);
+  const deployment = getWdollarShielded();
   if (!deployment) {
-    console.error(`No deploy on file for network ${network}. Run \`npm run setup -- --network ${network}\` first.`);
+    console.error(`No shielded deployment on file for network ${network}. Run \`npm run deploy:shielded\` first.`);
     process.exit(1);
   }
   console.log(`  Contract: ${deployment.address}`);
   console.log(`  Network: ${network}\n`);
-
-  const myAccountId = getWdollarAccountId();
-  if (myAccountId) {
-    console.log(`  Your Account ID: ${myAccountId}\n`);
-  }
 
   try {
     const seed = SEED;
@@ -151,10 +166,10 @@ async function main() {
     process.stdout.write('\r  Synced.                                      \n');
 
     await persistWalletState(network, walletCtx);
-    const balance = state.unshielded.balances[unshieldedToken().raw] ?? 0n;
-    console.log(`  Balance: ${balance.toLocaleString()} tNight\n`);
+    const tNightBalance = state.unshielded.balances[unshieldedToken().raw] ?? 0n;
+    console.log(`  tNIGHT: ${tNightBalance.toLocaleString()}\n`);
 
-    if (balance === 0n && network !== 'undeployed' && networkConfig.faucet) {
+    if (tNightBalance === 0n && network !== 'undeployed' && networkConfig.faucet) {
       const address = walletCtx.unshieldedKeystore.getBech32Address();
       console.log('  Wallet has no tNight. Fund it from the faucet:');
       console.log(`     ${networkConfig.faucet}`);
@@ -167,11 +182,16 @@ async function main() {
     const deployed: any = await findDeployedContract(providers, {
       compiledContract: compiledContract as any,
       contractAddress: deployment.address,
-      privateStateId: 'wdollar-state',
+      privateStateId: 'wdollar-shielded-state',
     });
 
     console.log('  Connected!\n');
 
+    function unwrap(v: unknown): Uint8Array {
+      if (v instanceof Uint8Array) return v;
+      if (v && typeof v === 'object' && 'bytes' in (v as any) && (v as any).bytes instanceof Uint8Array) return (v as any).bytes;
+      throw new Error(`Expected Uint8Array or {bytes}, got ${typeof v}`);
+    }
     const call = (method: string, ...args: any[]) =>
       (deployed.callTx as any)[method](...args).then((r: any) => r.private.result);
     const submit = (method: string, ...args: any[]) =>
@@ -180,14 +200,14 @@ async function main() {
     let running = true;
     while (running) {
       console.log('─── Menu ───────────────────────────────────────────────────────');
-      console.log('  1. My Account ID');
-      console.log('  2. My Balance');
-      console.log('  3. Token Info');
-      console.log('  4. Transfer');
-      console.log('  5. Approve');
-      console.log('  6. Check Allowance');
-      console.log('  7. Transfer From');
-      console.log('  8. Mint (owner only)');
+      console.log('  1. My Coin Public Key');
+      console.log('  2. Token Info');
+      console.log('  3. Token Color');
+      console.log('  4. Mint (owner only)');
+      console.log('  5. Owner');
+      console.log('  6. Transfer Ownership');
+      console.log('  7. Pause (owner only)');
+      console.log('  8. Unpause (owner only)');
       console.log('  9. Wallet Balance');
       console.log('  10. Exit\n');
 
@@ -195,44 +215,25 @@ async function main() {
 
       switch (choice.trim()) {
         case '1': {
-          if (myAccountId) {
-            console.log(`\n  Your Account ID: ${myAccountId}\n`);
-            console.log('  Share this hex string with others so they can send you tokens.\n');
-          } else {
-            console.log('\n  No Account ID on file. Re-deploy the contract.\n');
-          }
+          const coinPubKey = state.shielded.coinPublicKey.toHexString();
+          console.log(`\n  Your Coin Public Key: ${coinPubKey}\n`);
+          console.log('  Share this hex with the contract owner so they can mint tokens to you.');
+          console.log('  This is NOT your wallet address — it is your shielded identity.\n');
           break;
         }
 
         case '2': {
-          if (!myAccountId) {
-            console.log('\n  No Account ID on file. Re-deploy the contract.\n');
-            break;
-          }
-          console.log('\n  Fetching your balance...');
-          try {
-            const result = await call('balanceOf', parseAddress(myAccountId));
-            console.log(`\n  Your WD balance: ${result.toLocaleString()}\n`);
-          } catch (error) {
-            console.error('\n  Failed:', error instanceof Error ? error.message : error);
-          }
-          break;
-        }
-
-        case '3': {
           console.log('\n  Fetching token info...');
           try {
-            const [name, symbol, decimals, totalSupply, owner] = await Promise.all([
+            const [name, symbol, decimals, owner] = await Promise.all([
               call('name'),
               call('symbol'),
               call('decimals'),
-              call('totalSupply'),
               call('owner'),
             ]);
             console.log(`\n  Name:          ${name}`);
             console.log(`  Symbol:        ${symbol}`);
             console.log(`  Decimals:      ${decimals.toString()}`);
-            console.log(`  Total Supply:  ${totalSupply.toLocaleString()}`);
             console.log(`  Owner:         ${formatEither(owner)}\n`);
           } catch (error) {
             console.error('\n  Failed:', error instanceof Error ? error.message : error);
@@ -240,16 +241,40 @@ async function main() {
           break;
         }
 
+        case '3': {
+          console.log('\n  Fetching token color...');
+          try {
+            const result = await call('tokenColor');
+            const hex = Buffer.from(unwrap(result)).toString('hex');
+            console.log(`\n  Token Color:  ${hex}\n`);
+          } catch (error) {
+            console.error('\n  Failed:', error instanceof Error ? error.message : error);
+          }
+          break;
+        }
+
         case '4': {
-          const to = await rl.question('  Recipient account ID (64 hex chars): ');
+          const recipientHex = await rl.question('  Recipient coin public key (64 hex chars): ');
           const valueStr = await rl.question('  Amount: ');
           const value = BigInt(valueStr);
-          console.log('\n  Submitting transfer...');
+
+          if (value > BigInt('18446744073709551615')) {
+            console.log('\n  Amount too large. Shielded tokens cap at Uint<64> (max 18,446,744,073,709,551,615).\n');
+            break;
+          }
+
+          const nonce = getRandomValues(new Uint8Array(32));
+          console.log('\n  Submitting mint...');
           try {
-            const tx = await submit('transfer', parseAddress(to), value);
-            console.log(`\n  Transfer submitted!`);
-            console.log(`  Transaction ID: ${tx.txId}`);
-            console.log(`  Block height: ${tx.blockHeight}\n`);
+            const coin = await call('mint', parseCoinPublicKey(recipientHex), value, nonce);
+            console.log(`\n  ✅ Mint submitted!`);
+            console.log(`\n  ── ShieldedCoinInfo ──────────────────────────────────`);
+            console.log(`  Nonce:  ${Buffer.from(unwrap(coin.nonce)).toString('hex')}`);
+            console.log(`  Color:  ${Buffer.from(unwrap(coin.color)).toString('hex')}`);
+            console.log(`  Value:  ${coin.value.toLocaleString()}`);
+            console.log('  ───────────────────────────────────────────────────────');
+            console.log('\n  ⚠  SAVE THIS INFO. It is the ONLY copy of the minted coin.');
+            console.log('     The recipient cannot detect it by scanning the chain.\n');
           } catch (error) {
             console.error('\n  Failed:', error instanceof Error ? error.message : error);
           }
@@ -257,15 +282,10 @@ async function main() {
         }
 
         case '5': {
-          const spender = await rl.question('  Spender account ID (64 hex chars): ');
-          const valueStr = await rl.question('  Amount: ');
-          const value = BigInt(valueStr);
-          console.log('\n  Submitting approval...');
+          console.log('\n  Fetching owner...');
           try {
-            const tx = await submit('approve', parseAddress(spender), value);
-            console.log(`\n  Approval submitted!`);
-            console.log(`  Transaction ID: ${tx.txId}`);
-            console.log(`  Block height: ${tx.blockHeight}\n`);
+            const owner = await call('owner');
+            console.log(`\n  Owner:  ${formatEither(owner)}\n`);
           } catch (error) {
             console.error('\n  Failed:', error instanceof Error ? error.message : error);
           }
@@ -273,12 +293,13 @@ async function main() {
         }
 
         case '6': {
-          const owner = await rl.question('  Owner account ID (64 hex chars): ');
-          const spender = await rl.question('  Spender account ID (64 hex chars): ');
-          console.log('\n  Fetching allowance...');
+          const newOwnerHex = await rl.question('  New owner account ID (64 hex chars): ');
+          console.log('\n  Submitting transfer ownership...');
           try {
-            const result = await call('allowance', parseAddress(owner), parseAddress(spender));
-            console.log(`\n  Allowance: ${result.toLocaleString()}\n`);
+            const tx = await submit('transferOwnership', parseEitherAddress(newOwnerHex));
+            console.log(`\n  Ownership transfer submitted!`);
+            console.log(`  Transaction ID: ${tx.txId}`);
+            console.log(`  Block height: ${tx.blockHeight}\n`);
           } catch (error) {
             console.error('\n  Failed:', error instanceof Error ? error.message : error);
           }
@@ -286,16 +307,11 @@ async function main() {
         }
 
         case '7': {
-          const from = await rl.question('  From account ID (64 hex chars): ');
-          const to = await rl.question('  To account ID (64 hex chars): ');
-          const valueStr = await rl.question('  Amount: ');
-          const value = BigInt(valueStr);
-          console.log('\n  Submitting transfer from...');
+          console.log('\n  Pausing contract...');
           try {
-            const tx = await submit('transferFrom', parseAddress(from), parseAddress(to), value);
-            console.log(`\n  Transfer From submitted!`);
-            console.log(`  Transaction ID: ${tx.txId}`);
-            console.log(`  Block height: ${tx.blockHeight}\n`);
+            const tx = await submit('pause');
+            console.log(`\n  Contract paused!`);
+            console.log(`  Transaction ID: ${tx.txId}\n`);
           } catch (error) {
             console.error('\n  Failed:', error instanceof Error ? error.message : error);
           }
@@ -303,15 +319,11 @@ async function main() {
         }
 
         case '8': {
-          const to = await rl.question('  Recipient account ID (64 hex chars): ');
-          const valueStr = await rl.question('  Amount: ');
-          const value = BigInt(valueStr);
-          console.log('\n  Submitting mint...');
+          console.log('\n  Unpausing contract...');
           try {
-            const tx = await submit('mint', parseAddress(to), value);
-            console.log(`\n  Mint submitted!`);
-            console.log(`  Transaction ID: ${tx.txId}`);
-            console.log(`  Block height: ${tx.blockHeight}\n`);
+            const tx = await submit('unpause');
+            console.log(`\n  Contract unpaused!`);
+            console.log(`  Transaction ID: ${tx.txId}\n`);
           } catch (error) {
             console.error('\n  Failed:', error instanceof Error ? error.message : error);
           }
@@ -321,10 +333,10 @@ async function main() {
         case '9': {
           console.log('\n  Checking balance...');
           const currentState = await walletCtx.wallet.waitForSyncedState();
-          const currentBalance = currentState.unshielded.balances[unshieldedToken().raw] ?? 0n;
+          const currentTNight = currentState.unshielded.balances[unshieldedToken().raw] ?? 0n;
           const dustBalance = currentState.dust.balance(new Date());
-          console.log(`\n  tNight: ${currentBalance.toLocaleString()}`);
-          console.log(`  DUST: ${dustBalance.toLocaleString()}\n`);
+          console.log(`\n  tNIGHT: ${currentTNight.toLocaleString()}`);
+          console.log(`  DUST:   ${dustBalance.toLocaleString()}\n`);
           break;
         }
 
