@@ -1,0 +1,181 @@
+// WDA Shielded — Private balances (shielded UTXO) + public x402 receipts
+// Balances: NativeShieldedToken (Zswap)
+// Receipts: public Map, same as wdollar-agent
+// Transfer circuits burn sender's UTXO and mint a new one to recipient.
+
+pragma language_version >= 0.23.0;
+
+import CompactStandardLibrary;
+import "../node_modules/@openzeppelin/compact-contracts/access/Ownable"
+  prefix Ownable_;
+import "../node_modules/@openzeppelin/compact-contracts/security/Pausable"
+  prefix Pausable_;
+import "../../compact-contracts/contracts/src/token/NativeShieldedToken"
+  prefix Shielded_;
+
+struct Receipt {
+  to: Either<Bytes<32>, ContractAddress>;
+  amount: Uint<64>;
+  requestNonce: Bytes<32>;
+}
+
+struct TokenInfo {
+  name: Opaque<"string">;
+  symbol: Opaque<"string">;
+  decimals: Uint<8>;
+  totalSupply: Uint<128>;
+  owner: Either<Bytes<32>, ContractAddress>;
+  isPaused: Boolean;
+}
+
+struct TransferResult {
+  minted: ShieldedCoinInfo;
+  change: Maybe<ShieldedCoinInfo>;
+}
+
+struct TransferWithReceiptResult {
+  receiptId: Uint<64>;
+  minted: ShieldedCoinInfo;
+  change: Maybe<ShieldedCoinInfo>;
+}
+
+ledger receipts: Map<Uint<64>, Receipt>;
+ledger nextReceiptId: Uint<64>;
+ledger _totalSupply: Uint<128>;
+
+constructor(
+  domainSep: Bytes<32>,
+  _name: Opaque<"string">,
+  _symbol: Opaque<"string">,
+  _decimals: Uint<8>,
+  _initOwner: Either<Bytes<32>, ContractAddress>,
+) {
+  Shielded_initialize(domainSep, _name, _symbol, _decimals);
+  Ownable_initialize(_initOwner);
+  nextReceiptId = 0;
+  _totalSupply = disclose(0);
+}
+
+// ─── Queries ────────────────────────────────────────────────
+
+export circuit name(): Opaque<"string"> {
+  return Shielded_name();
+}
+
+export circuit symbol(): Opaque<"string"> {
+  return Shielded_symbol();
+}
+
+export circuit decimals(): Uint<8> {
+  return Shielded_decimals();
+}
+
+export circuit isInitialized(): Boolean {
+  return Shielded_isInitialized();
+}
+
+export circuit tokenColor(): Bytes<32> {
+  return Shielded_tokenColor();
+}
+
+export circuit owner(): Either<Bytes<32>, ContractAddress> {
+  return Ownable_owner();
+}
+
+export circuit receipt(id: Uint<64>): Receipt {
+  return receipts.lookup(disclose(id));
+}
+
+export circuit tokenInfo(): TokenInfo {
+  return TokenInfo {
+    name: Shielded_name(),
+    symbol: Shielded_symbol(),
+    decimals: Shielded_decimals(),
+    totalSupply: _totalSupply,
+    owner: Ownable_owner(),
+    isPaused: Pausable_isPaused(),
+  };
+}
+
+// ─── Owner only ─────────────────────────────────────────────
+
+export circuit pause(): [] {
+  Ownable_assertOnlyOwner();
+  Pausable__pause();
+}
+
+export circuit unpause(): [] {
+  Ownable_assertOnlyOwner();
+  Pausable__unpause();
+}
+
+export circuit transferOwnership(
+  newOwner: Either<Bytes<32>, ContractAddress>,
+): [] {
+  Ownable_assertOnlyOwner();
+  return Ownable_transferOwnership(newOwner);
+}
+
+export circuit mint(
+  recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+  amount: Uint<64>,
+  nonce: Bytes<32>,
+): ShieldedCoinInfo {
+  Pausable_assertNotPaused();
+  Ownable_assertOnlyOwner();
+  const coin = Shielded__mint(recipient, amount, nonce);
+  _totalSupply = disclose((_totalSupply + amount) as Uint<128>);
+  return coin;
+}
+
+// ─── Transfer without receipt (shielded) ────────────────────
+
+export circuit transfer(
+  coin: ShieldedCoinInfo,
+  amount: Uint<64>,
+  refundTo: Either<ZswapCoinPublicKey, ContractAddress>,
+  recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+  mintNonce: Bytes<32>,
+): TransferResult {
+  Pausable_assertNotPaused();
+  const burnResult = Shielded__burn(
+    coin,
+    amount as Uint<128>,
+    refundTo,
+  );
+  const minted = Shielded__mint(recipient, amount, mintNonce);
+  return TransferResult { minted, change: burnResult };
+}
+
+// ─── Transfer with receipt (shielded + public receipt) ──────
+
+export circuit transferWithReceipt(
+  coin: ShieldedCoinInfo,
+  amount: Uint<64>,
+  refundTo: Either<ZswapCoinPublicKey, ContractAddress>,
+  recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+  mintNonce: Bytes<32>,
+  receiptTo: Either<Bytes<32>, ContractAddress>,
+  requestNonce: Bytes<32>,
+): TransferWithReceiptResult {
+  Pausable_assertNotPaused();
+  const burnResult = Shielded__burn(
+    coin,
+    amount as Uint<128>,
+    refundTo,
+  );
+  const minted = Shielded__mint(recipient, amount, mintNonce);
+
+  const receiptId = nextReceiptId;
+  receipts.insert(
+    disclose(receiptId),
+    disclose(Receipt {
+      to: receiptTo,
+      amount: amount,
+      requestNonce: requestNonce,
+    }),
+  );
+  nextReceiptId = (receiptId + 1) as Uint<64>;
+
+  return TransferWithReceiptResult { receiptId, minted, change: burnResult };
+}
