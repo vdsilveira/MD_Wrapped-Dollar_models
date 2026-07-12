@@ -17,6 +17,8 @@
     "cli": "npx tsx src/cli.ts",
     "cli:shielded": "npx tsx src/cli-shielded.ts",
     "cli:agent": "npx tsx src/cli-agent.ts",
+    "pay:x402": "npx tsx src/pay-x402.ts",
+    "verify:receipt": "npx tsx src/verify-receipt.ts",
     "check-balance": "npx tsx src/check-balance.ts",
     "network": "npx tsx src/network.ts",
     "proof-server:start": "docker compose up -d",

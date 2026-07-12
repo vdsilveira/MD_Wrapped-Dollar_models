@@ -372,13 +372,34 @@ npm run cli:agent
 
 ---
 
+## Pontes x402 (scripts não-interativos, 2026-07-12)
+
+Três scripts fazem do WDA o trilho de pagamento do app `midnight-x402` (o app os executa
+como child process — o SDK Midnight e os bindings do `compact compile` ficam só neste repo):
+
+| Script | npm | O que faz | Precisa de |
+|---|---|---|---|
+| `src/pay-x402.ts` | `npm run pay:x402 -- --to <hex64> --amount <n> --nonce <hex64>` | Paga via `transferWithReceipt` (mint automático ao próprio agente/owner se o saldo for insuficiente); emite progresso em JSON-lines; resolve o hash canônico da tx no indexer (o `txId` do midnight-js ≠ hash que o indexer conhece) | wallet + proof server |
+| `src/verify-receipt.ts` | `npm run verify:receipt -- --receipt <id> --nonce <hex> --to <hex> --amount <n>` | Decodifica `receipts[receiptId]` do estado público (via indexer) e confere nonce/destinatário/valor; veredito JSON (`ok`/`nonce_mismatch`/`receipt_not_found`/…) | só indexer (read-only) |
+| `src/state-x402.ts` | — | Snapshot do ledger: saldos (`--accounts`), últimos receipts, `nextReceiptId`, bloco atual — alimenta o card "On-chain evidence" do dashboard | só indexer (read-only) |
+
+**Requisito que motivou mudança no contrato:** os ledgers `balances`, `receipts` e
+`nextReceiptId` são declarados com **`export ledger`**. Sem o `export`, o compilador gera um
+`ledger()` **vazio** (`type Ledger = {}`) e nenhum verificador off-chain consegue decodificar
+o estado — a checagem de receipt do facilitador depende disso. A semântica on-chain não muda.
+
+---
+
 ## Arquivos
 
 | Arquivo | Descrição |
 |---|---|
-| `contracts/wdollar-agent.compact` | Código fonte do contrato Compact |
-| `contracts/managed/wdollar-agent/` | Compilado (ZKIR, keys, contract) |
+| `contracts/wdollar-agent.compact` | Código fonte do contrato Compact (ledgers públicos com `export`) |
+| `contracts/managed/wdollar-agent/` | Compilado (ZKIR, keys, contract + `ledger()` para decode off-chain) |
 | `src/deploy-agent.ts` | Script de deploy |
 | `src/cli-agent.ts` | CLI interativa |
+| `src/pay-x402.ts` | Ponte de pagamento x402 (não-interativa, JSON-lines) |
+| `src/verify-receipt.ts` | Ponte de verificação de receipt (read-only) |
+| `src/state-x402.ts` | Ponte de snapshot do ledger (read-only) |
 | `src/network.ts` | Helpers de estado (.midnight-state.json) |
 | `docs/WDA.md` | Esta documentação |

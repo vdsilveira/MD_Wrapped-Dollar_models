@@ -29,9 +29,12 @@ struct TokenInfo {
 ledger _tokenName: Opaque<"string">;
 ledger _tokenSymbol: Opaque<"string">;
 ledger _tokenDecimals: Uint<8>;
-ledger balances: Map<Either<Bytes<32>, ContractAddress>, Uint<64>>;
-ledger receipts: Map<Uint<64>, Receipt>;
-ledger nextReceiptId: Uint<64>;
+// balances/receipts/nextReceiptId are exported so off-chain verifiers (the
+// x402 facilitator) can decode them from indexer state via the generated
+// ledger() accessor — without export the compiler emits an empty Ledger type.
+export ledger balances: Map<Either<Bytes<32>, ContractAddress>, Uint<64>>;
+export ledger receipts: Map<Uint<64>, Receipt>;
+export ledger nextReceiptId: Uint<64>;
 ledger _totalSupply: Uint<64>;
 
 witness wit_WDASK(): Bytes<32>;
