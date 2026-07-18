@@ -101,7 +101,7 @@ const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'swda
 const contractPath = path.join(zkConfigPath, 'contract', 'index.js');
 
 if (!fs.existsSync(contractPath)) {
-  console.error('\n❌ Contract not compiled! Run: npm run compile\n');
+  console.error('\n❌ Contract not compiled! Run: npm run compile:agent-shielded\n');
   process.exit(1);
 }
 
@@ -183,7 +183,7 @@ async function createProviders(walletCtx: WalletContext) {
 
   return {
     privateStateProvider: levelPrivateStateProvider({
-      privateStateStoreName: 'swda-state',
+      privateStateStoreName: 'wdollar-agent-shielded-state',
       accountId,
       privateStoragePasswordProvider: () => privateStatePassword,
     }),
@@ -217,7 +217,7 @@ async function createProviders(walletCtx: WalletContext) {
 
 async function main() {
   console.log('\n╔══════════════════════════════════════════════════════════════╗');
-  console.log(`║  Deploy SWDA via ProofStation (${network})`);
+  console.log(`║  Deploy WDA Shielded via ProofStation (${network})`);
   console.log('╚══════════════════════════════════════════════════════════════╝\n');
 
   // Limpa lock residual do LevelDB
@@ -333,12 +333,12 @@ async function main() {
         compiledContract: compiledContract as any,
         args: [
           domainSep,
-          'SWDA',
-          'SWDA',
+          'WDA Shielded',
+          'WDAS',
           6n,
           eitherAddress(ownerAccountId),
         ],
-        privateStateId: 'swda-state',
+        privateStateId: 'wdollar-agent-shielded-state',
         initialPrivateState: { secretKey },
       });
       break;
@@ -391,7 +391,7 @@ async function main() {
   await persistWalletState(network, walletCtx);
   await walletCtx.wallet.stop();
   console.log('─── Deployment complete ────────────────────────────────────────\n');
-  console.log('  Next: npm run cli:proofstation\n');
+  console.log('  Next: npm run cli:agent-shielded\n');
 }
 
 main().catch((err) => {

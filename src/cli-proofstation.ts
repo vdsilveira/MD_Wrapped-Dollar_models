@@ -490,7 +490,7 @@ async function main() {
     let running = true;
     while (running) {
       console.log('─── Menu ───────────────────────────────────────────────────────');
-      console.log('  1. My Account ID');
+      console.log('  1. My Coin Public Key');
       console.log('  2. Token Info');
       console.log('  3. Token Color');
       console.log('  4. Mint (owner only)');
@@ -506,10 +506,9 @@ async function main() {
 
       switch (choice.trim()) {
         case '1': {
-          const s = await Rx.firstValueFrom(walletCtx.wallet.state());
-          const bech32Addr = ShieldedAddress.codec.encode(network, s.shielded.address).toString();
-          console.log(`\n  Your Shielded Address: ${bech32Addr}\n`);
-          console.log('  Share this address to receive shielded tokens.\n');
+          const coinPubKey = walletCtx.shieldedSecretKeys.coinPublicKey;
+          console.log(`\n  Your Coin Public Key: ${coinPubKey}\n`);
+          console.log('  Share this key to receive shielded tokens.\n');
           break;
         }
 
