@@ -14,7 +14,7 @@ import "../../compact-contracts/contracts/src/token/NativeShieldedToken"
   prefix Shielded_;
 
 struct Receipt {
-  to: Either<Bytes<32>, ContractAddress>;
+  to: Either<ZswapCoinPublicKey, ContractAddress>;
   amount: Uint<64>;
   requestNonce: Bytes<32>;
 }
@@ -155,7 +155,6 @@ export circuit transferWithReceipt(
   refundTo: Either<ZswapCoinPublicKey, ContractAddress>,
   recipient: Either<ZswapCoinPublicKey, ContractAddress>,
   mintNonce: Bytes<32>,
-  receiptTo: Either<Bytes<32>, ContractAddress>,
   requestNonce: Bytes<32>,
 ): TransferWithReceiptResult {
   Pausable_assertNotPaused();
@@ -170,7 +169,7 @@ export circuit transferWithReceipt(
   receipts.insert(
     disclose(receiptId),
     disclose(Receipt {
-      to: receiptTo,
+      to: recipient,
       amount: amount,
       requestNonce: requestNonce,
     }),

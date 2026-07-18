@@ -655,7 +655,6 @@ async function main() {
           const amountStr2 = await rl.question('  Amount to transfer (e.g. 100 or 0.05): ');
           const refundHex2 = await rl.question('  Refund to coin public key (64 hex chars, your own key): ');
           const recipientStr2 = await rl.question('  Recipient shielded address (shield1...) or hex: ');
-          const receiptToHex = await rl.question('  Receipt "to" account ID (64 hex chars, e.g. server ID): ');
           const requestNonceHex = await rl.question('  Request nonce from server (64 hex chars): ');
 
           const recipient2 = recipientFromShieldedAddress(recipientStr2, network);
@@ -683,7 +682,6 @@ async function main() {
                   parseCoinPublicKey(refundHex2),
                   recipient2.coinPublicKey,
                   mintNonce2,
-                  parseEitherAddress(receiptToHex),
                   Buffer.from(requestNonceHex, 'hex'),
                 );
               },
