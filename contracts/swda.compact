@@ -14,8 +14,9 @@ import "../../compact-contracts/contracts/src/token/NativeShieldedToken"
   prefix Shielded_;
 
 struct Receipt {
-  to: Either<ZswapCoinPublicKey, ContractAddress>;
+  to: Either<Bytes<32>, ContractAddress>;
   amount: Uint<64>;
+  requestNonce: Bytes<32>;
 }
 
 struct TokenInfo {
@@ -33,11 +34,13 @@ struct TransferResult {
 }
 
 struct TransferWithReceiptResult {
+  receiptId: Uint<64>;
   minted: ShieldedCoinInfo;
   change: Maybe<ShieldedCoinInfo>;
 }
 
-export ledger receipts: Map<Bytes<32>, Receipt>;
+ledger receipts: Map<Uint<64>, Receipt>;
+ledger nextReceiptId: Uint<64>;
 ledger _totalSupply: Uint<128>;
 
 constructor(
@@ -49,6 +52,7 @@ constructor(
 ) {
   Shielded_initialize(domainSep, _name, _symbol, _decimals);
   Ownable_initialize(_initOwner);
+  nextReceiptId = 0;
   _totalSupply = disclose(0);
 }
 
@@ -78,8 +82,8 @@ export circuit owner(): Either<Bytes<32>, ContractAddress> {
   return Ownable_owner();
 }
 
-export circuit receipt(requestNonce: Bytes<32>): Receipt {
-  return receipts.lookup(disclose(requestNonce));
+export circuit receipt(id: Uint<64>): Receipt {
+  return receipts.lookup(disclose(id));
 }
 
 export circuit tokenInfo(): TokenInfo {
@@ -151,10 +155,10 @@ export circuit transferWithReceipt(
   refundTo: Either<ZswapCoinPublicKey, ContractAddress>,
   recipient: Either<ZswapCoinPublicKey, ContractAddress>,
   mintNonce: Bytes<32>,
+  receiptTo: Either<Bytes<32>, ContractAddress>,
   requestNonce: Bytes<32>,
 ): TransferWithReceiptResult {
   Pausable_assertNotPaused();
-  assert(!receipts.member(disclose(requestNonce)), "requestNonce already used");
   const burnResult = Shielded__burn(
     coin,
     amount as Uint<128>,
@@ -162,13 +166,16 @@ export circuit transferWithReceipt(
   );
   const minted = Shielded__mint(recipient, amount, mintNonce);
 
+  const receiptId = nextReceiptId;
   receipts.insert(
-    disclose(requestNonce),
+    disclose(receiptId),
     disclose(Receipt {
-      to: recipient,
+      to: receiptTo,
       amount: amount,
+      requestNonce: requestNonce,
     }),
   );
+  nextReceiptId = (receiptId + 1) as Uint<64>;
 
-  return TransferWithReceiptResult { minted, change: burnResult };
+  return TransferWithReceiptResult { receiptId, minted, change: burnResult };
 }
