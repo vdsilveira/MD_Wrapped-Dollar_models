@@ -496,7 +496,7 @@ async function main() {
       console.log('  4. Mint (owner only)');
       console.log('  5. Transfer (shielded, no receipt)');
       console.log('  6. Transfer with Receipt');
-      console.log('  7. Get Receipt (by ID)');
+      console.log('  7. Get Receipt (by requestNonce)');
       console.log('  8. Wallet Balance');
       console.log('  9. My WDAS Balance');
       console.log(' 10. Send tNIGHT');
@@ -655,7 +655,6 @@ async function main() {
           const amountStr2 = await rl.question('  Amount to transfer (e.g. 100 or 0.05): ');
           const refundHex2 = await rl.question('  Refund to coin public key (64 hex chars, your own key): ');
           const recipientStr2 = await rl.question('  Recipient shielded address (shield1...) or hex: ');
-          const receiptToHex = await rl.question('  Receipt "to" account ID (64 hex chars, e.g. server ID): ');
           const requestNonceHex = await rl.question('  Request nonce from server (64 hex chars): ');
 
           const recipient2 = recipientFromShieldedAddress(recipientStr2, network);
@@ -683,7 +682,6 @@ async function main() {
                   parseCoinPublicKey(refundHex2),
                   recipient2.coinPublicKey,
                   mintNonce2,
-                  parseEitherAddress(receiptToHex),
                   Buffer.from(requestNonceHex, 'hex'),
                 );
               },
@@ -691,7 +689,7 @@ async function main() {
             );
             const r = (result as any).private.result;
             console.log(`\n  ✅ Transfer with Receipt submitted!`);
-            console.log(`  Receipt ID: ${r.receiptId.toString()}\n`);
+            console.log(`  Request nonce: ${requestNonceHex}\n`);
             if (r.change.is_some) {
               const change = r.change.value;
               console.log(`  ── Change Coin ───────────────────────────────────────`);
@@ -707,7 +705,7 @@ async function main() {
             console.log(`  Color:  ${Buffer.from(unwrap(r.minted.color)).toString('hex')}`);
             console.log(`  Value:  ${fmt(r.minted.value)}`);
             console.log('  ───────────────────────────────────────────────────────');
-            console.log('\n  ⚠  Forward the minted coin info + receipt ID to the recipient.\n');
+            console.log('\n  ⚠  Forward the minted coin info to the recipient.\n');
           } catch (error) {
             console.error('\n  Failed:', error instanceof Error ? error.message : error);
           }
@@ -715,18 +713,17 @@ async function main() {
         }
 
         case '7': {
-          const idStr = await rl.question('  Receipt ID: ');
-          const id = BigInt(idStr);
+          const requestNonceHex = await rl.question('  Request nonce (64 hex chars): ');
+          const nonceBytes = Buffer.from(requestNonceHex, 'hex');
           console.log('\n  Fetching receipt...');
           try {
-            const receipt: any = await call('receipt', id);
+            const receipt: any = await call('receipt', nonceBytes);
             if (!receipt) {
-              console.log(`\n  Receipt #${idStr} not found.\n`);
+              console.log(`\n  Receipt for ${requestNonceHex} not found.\n`);
             } else {
-              console.log(`\n  ── Receipt #${idStr} ────────────────────────────────────`);
+              console.log(`\n  ── Receipt for ${requestNonceHex} ────────────────────────────`);
               console.log(`  To:           ${formatEither(receipt.to)}`);
               console.log(`  Amount:       ${receipt.amount.toString()}`);
-              console.log(`  RequestNonce: ${Buffer.from(unwrap(receipt.requestNonce)).toString('hex')}`);
               console.log('  ───────────────────────────────────────────────────────\n');
             }
           } catch (error) {
