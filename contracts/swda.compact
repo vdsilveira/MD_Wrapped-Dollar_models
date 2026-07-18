@@ -39,7 +39,7 @@ struct TransferWithReceiptResult {
   change: Maybe<ShieldedCoinInfo>;
 }
 
-ledger receipts: Map<Uint<64>, Receipt>;
+export ledger receipts: Map<Uint<64>, Receipt>;
 ledger nextReceiptId: Uint<64>;
 ledger _totalSupply: Uint<128>;
 
