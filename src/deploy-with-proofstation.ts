@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { resolveNetwork, getOrCreateSeed, saveWdollarAgentShielded, saveWdollarAgentShieldedSecretKey } from './network';
+import { resolveNetwork, getOrCreateSeed, saveSwda, saveSwdaSecretKey } from './network';
 import { createWallet, startUnshieldedAndDust, persistWalletState, unshieldedToken, type WalletContext } from './wallet';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
@@ -97,15 +97,15 @@ async function waitForProofServer(maxAttempts = 60, delayMs = 2000): Promise<boo
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'wdollar-agent-shielded');
+const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'swda');
 const contractPath = path.join(zkConfigPath, 'contract', 'index.js');
 
 if (!fs.existsSync(contractPath)) {
-  console.error('\n❌ Contract not compiled! Run: npm run compile:agent-shielded\n');
+  console.error('\n❌ Contract not compiled! Run: npm run compile\n');
   process.exit(1);
 }
 
-const WdollarAgentShielded = await import(pathToFileURL(contractPath).href);
+const Swda = await import(pathToFileURL(contractPath).href);
 
 const secretKey = getRandomValues(new Uint8Array(32));
 const ownerAccountId = persistentHash(new CompactTypeVector(1, Bytes32Descriptor), [secretKey]);
@@ -123,7 +123,7 @@ const witnesses = {
   },
 };
 
-const compiledContract = CompiledContract.make('wdollar-agent-shielded', WdollarAgentShielded.Contract).pipe(
+const compiledContract = CompiledContract.make('swda', Swda.Contract).pipe(
   CompiledContract.withWitnesses(witnesses),
   CompiledContract.withCompiledFileAssets(zkConfigPath),
 );
@@ -183,7 +183,7 @@ async function createProviders(walletCtx: WalletContext) {
 
   return {
     privateStateProvider: levelPrivateStateProvider({
-      privateStateStoreName: 'wdollar-agent-shielded-state',
+      privateStateStoreName: 'swda-state',
       accountId,
       privateStoragePasswordProvider: () => privateStatePassword,
     }),
@@ -217,7 +217,7 @@ async function createProviders(walletCtx: WalletContext) {
 
 async function main() {
   console.log('\n╔══════════════════════════════════════════════════════════════╗');
-  console.log(`║  Deploy WDA Shielded via ProofStation (${network})`);
+  console.log(`║  Deploy SWDA via ProofStation (${network})`);
   console.log('╚══════════════════════════════════════════════════════════════╝\n');
 
   // Limpa lock residual do LevelDB
@@ -333,12 +333,12 @@ async function main() {
         compiledContract: compiledContract as any,
         args: [
           domainSep,
-          'WDA Shielded',
-          'WDAS',
+          'SWDA',
+          'SWDA',
           6n,
           eitherAddress(ownerAccountId),
         ],
-        privateStateId: 'wdollar-agent-shielded-state',
+        privateStateId: 'swda-state',
         initialPrivateState: { secretKey },
       });
       break;
@@ -381,17 +381,17 @@ async function main() {
   console.log(`  Contract Address: ${contractAddress}`);
   console.log(`  Domain Separator: ${Buffer.from(domainSep).toString('hex')}\n`);
 
-  saveWdollarAgentShielded(
+  saveSwda(
     contractAddress,
     Buffer.from(domainSep).toString('hex'),
   );
-  saveWdollarAgentShieldedSecretKey(Buffer.from(secretKey).toString('hex'));
+  saveSwdaSecretKey(Buffer.from(secretKey).toString('hex'));
   console.log('  Saved to .midnight-state.json\n');
 
   await persistWalletState(network, walletCtx);
   await walletCtx.wallet.stop();
   console.log('─── Deployment complete ────────────────────────────────────────\n');
-  console.log('  Next: npm run cli:agent-shielded\n');
+  console.log('  Next: npm run cli:proofstation\n');
 }
 
 main().catch((err) => {

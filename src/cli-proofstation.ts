@@ -22,7 +22,7 @@ import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { resolveNetwork, getOrCreateSeed, getWdollarAgentShielded, getWdollarAgentShieldedSecretKey } from './network';
+import { resolveNetwork, getOrCreateSeed, getSwda, getSwdaSecretKey } from './network';
 import { createWallet, startUnshieldedAndDust, persistWalletState, unshieldedToken, type WalletContext } from './wallet';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
 
@@ -80,16 +80,16 @@ async function proofStationBalanceOnly(provedTx: { serialize(): Uint8Array }): P
 // ─── End of ProofStation Integration ─────────────────────────────────────────
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'wdollar-agent-shielded');
+const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'swda');
 
 const contractPath = path.join(zkConfigPath, 'contract', 'index.js');
 
 if (!fs.existsSync(contractPath)) {
-  console.error('\nContract not compiled! Run: npm run compile:agent-shielded\n');
+  console.error('\nContract not compiled! Run: npm run compile\n');
   process.exit(1);
 }
 
-const WdollarAgentShielded = await import(pathToFileURL(contractPath).href);
+const Swda = await import(pathToFileURL(contractPath).href);
 
 const witnesses = {
   wit_OwnableSK(context: any) {
@@ -97,7 +97,7 @@ const witnesses = {
   },
 };
 
-const compiledContract = CompiledContract.make('wdollar-agent-shielded', WdollarAgentShielded.Contract).pipe(
+const compiledContract = CompiledContract.make('swda', Swda.Contract).pipe(
   CompiledContract.withWitnesses(witnesses),
   CompiledContract.withCompiledFileAssets(zkConfigPath),
 );
@@ -275,18 +275,18 @@ async function createProviders(walletCtx: WalletContext) {
   const accountId = walletCtx.unshieldedKeystore.getBech32Address().toString();
 
   const privateStateProvider = levelPrivateStateProvider({
-    privateStateStoreName: 'wdollar-agent-shielded-state',
+    privateStateStoreName: 'swda-state',
     accountId,
     privateStoragePasswordProvider: () => privateStatePassword,
   });
 
   // Pre-seed private state with owner secretKey from deploy (if available)
-  const savedSecretKeyHex = getWdollarAgentShieldedSecretKey();
-  const deploymentInfo = getWdollarAgentShielded();
+  const savedSecretKeyHex = getSwdaSecretKey();
+  const deploymentInfo = getSwda();
   if (savedSecretKeyHex && deploymentInfo) {
     const secretKeyBytes = new Uint8Array(Buffer.from(savedSecretKeyHex, 'hex'));
     (privateStateProvider as any).setContractAddress(deploymentInfo.address);
-    await (privateStateProvider as any).set('wdollar-agent-shielded-state', { secretKey: secretKeyBytes });
+    await (privateStateProvider as any).set('swda-state', { secretKey: secretKeyBytes });
     console.log('  Loaded owner secretKey from .midnight-state.json');
   } else {
     console.log('  ⚠ No owner secretKey found in .midnight-state.json — owner-only ops (mint) may fail');
@@ -392,15 +392,15 @@ async function sendTNightWithProofStation(
 }
 
 async function main() {
-  console.log('\n╔══════════════════════════════════════════════════════════════╗');
-  console.log('║       WDA Shielded CLI (via ProofStation)                   ║');
+    console.log('\n╔══════════════════════════════════════════════════════════════╗');
+  console.log('║       SWDA CLI (via ProofStation)                           ║');
   console.log('╚══════════════════════════════════════════════════════════════╝\n');
 
   const rl = createInterface({ input: stdin, output: stdout });
 
-  const deployment = getWdollarAgentShielded();
+  const deployment = getSwda();
   if (!deployment) {
-    console.error(`No agent-shielded deployment on file for network ${network}. Run \`npm run deploy:proofstation\` first.`);
+    console.error(`No swda deployment on file for network ${network}. Run \`npm run deploy:proofstation\` first.`);
     process.exit(1);
   }
   console.log(`  Contract: ${deployment.address}`);
@@ -465,11 +465,17 @@ async function main() {
     console.log('  Connecting to contract...');
     const providers = await createProviders(walletCtx);
 
-    const deployed: any = await findDeployedContract(providers, {
-      compiledContract: compiledContract as any,
-      contractAddress: deployment.address,
-      privateStateId: 'wdollar-agent-shielded-state',
-    });
+    console.log('  Calling findDeployedContract (timeout 120s)...');
+    const deployed: any = await Promise.race([
+      findDeployedContract(providers, {
+        compiledContract: compiledContract as any,
+        contractAddress: deployment.address,
+        privateStateId: 'swda-state',
+      }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('findDeployedContract timed out after 120s')), 120_000),
+      ),
+    ]);
 
     console.log('  Connected!\n');
 
@@ -742,13 +748,13 @@ async function main() {
         }
 
         case '9': {
-          console.log('\n  Checking WDAS balance...');
+          console.log('\n  Checking SWDA balance...');
           try {
             const tokenColorResult = await call('tokenColor');
             const colorHex = Buffer.from(unwrap(tokenColorResult)).toString('hex');
             const s = await Rx.firstValueFrom(walletCtx.wallet.state());
             const wdasBalance = s.shielded?.balances?.[colorHex] ?? 0n;
-            console.log(`\n  WDAS Balance: ${fmt(wdasBalance)}\n`);
+            console.log(`\n  SWDA Balance: ${fmt(wdasBalance)}\n`);
             if (wdasBalance === 0n) {
               console.log('  (Shielded wallet may not be fully synced yet — balance is best-effort)\n');
             }

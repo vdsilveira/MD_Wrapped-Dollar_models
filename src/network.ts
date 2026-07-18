@@ -32,14 +32,9 @@ export interface NetworkState {
   activeNetwork: NetworkId;
   wallets: Partial<Record<NetworkId, { seed: string; createdAt: string }>>;
   deployments: Partial<Record<NetworkId, DeploymentRecord>>;
-  wdollarAccountId?: string;
-  wdollarShieldedAddress?: string;
-  wdollarShieldedDomain?: string;
-  wdollarAgentAddress?: string;
-  wdollarAgentAccountId?: string;
-  wdollarAgentShieldedAddress?: string;
-  wdollarAgentShieldedDomain?: string;
-  wdollarAgentShieldedSecretKey?: string;
+  swdaAddress?: string;
+  swdaDomain?: string;
+  swdaSecretKey?: string;
 }
 
 export const STATE_FILE_NAME = '.midnight-state.json';
@@ -270,7 +265,7 @@ export function recordDeployment(
   saveState(next, { cwd });
 }
 
-export function saveWdollarAccountId(accountId: string, opts: FsOptions = {}): void {
+export function saveSwda(address: string, domain: string, opts: FsOptions = {}): void {
   const cwd = opts.cwd ?? process.cwd();
   const existing = loadState({ cwd });
   const next: NetworkState = existing ?? {
@@ -279,42 +274,20 @@ export function saveWdollarAccountId(accountId: string, opts: FsOptions = {}): v
     wallets: {},
     deployments: {},
   };
-  next.wdollarAccountId = accountId;
+  next.swdaAddress = address;
+  next.swdaDomain = domain;
   saveState(next, { cwd });
 }
 
-export function getWdollarAccountId(opts: FsOptions = {}): string | null {
+export function getSwda(opts: FsOptions = {}): { address: string; domain: string } | null {
   const state = loadState(opts);
-  return state?.wdollarAccountId ?? null;
-}
-
-export function saveWdollarShielded(
-  address: string,
-  domain: string,
-  opts: FsOptions = {},
-): void {
-  const cwd = opts.cwd ?? process.cwd();
-  const existing = loadState({ cwd });
-  const next: NetworkState = existing ?? {
-    version: STATE_VERSION,
-    activeNetwork: 'undeployed',
-    wallets: {},
-    deployments: {},
-  };
-  next.wdollarShieldedAddress = address;
-  next.wdollarShieldedDomain = domain;
-  saveState(next, { cwd });
-}
-
-export function getWdollarShielded(opts: FsOptions = {}): { address: string; domain: string } | null {
-  const state = loadState(opts);
-  if (state?.wdollarShieldedAddress && state?.wdollarShieldedDomain) {
-    return { address: state.wdollarShieldedAddress, domain: state.wdollarShieldedDomain };
+  if (state?.swdaAddress && state?.swdaDomain) {
+    return { address: state.swdaAddress, domain: state.swdaDomain };
   }
   return null;
 }
 
-export function saveWdollarAgentAddress(address: string, opts: FsOptions = {}): void {
+export function saveSwdaSecretKey(secretKeyHex: string, opts: FsOptions = {}): void {
   const cwd = opts.cwd ?? process.cwd();
   const existing = loadState({ cwd });
   const next: NetworkState = existing ?? {
@@ -323,75 +296,13 @@ export function saveWdollarAgentAddress(address: string, opts: FsOptions = {}): 
     wallets: {},
     deployments: {},
   };
-  next.wdollarAgentAddress = address;
+  next.swdaSecretKey = secretKeyHex;
   saveState(next, { cwd });
 }
 
-export function getWdollarAgentAddress(opts: FsOptions = {}): string | null {
+export function getSwdaSecretKey(opts: FsOptions = {}): string | null {
   const state = loadState(opts);
-  return state?.wdollarAgentAddress ?? null;
-}
-
-export function saveWdollarAgentAccountId(accountId: string, opts: FsOptions = {}): void {
-  const cwd = opts.cwd ?? process.cwd();
-  const existing = loadState({ cwd });
-  const next: NetworkState = existing ?? {
-    version: STATE_VERSION,
-    activeNetwork: 'undeployed',
-    wallets: {},
-    deployments: {},
-  };
-  next.wdollarAgentAccountId = accountId;
-  saveState(next, { cwd });
-}
-
-export function getWdollarAgentAccountId(opts: FsOptions = {}): string | null {
-  const state = loadState(opts);
-  return state?.wdollarAgentAccountId ?? null;
-}
-
-export function saveWdollarAgentShielded(
-  address: string,
-  domain: string,
-  opts: FsOptions = {},
-): void {
-  const cwd = opts.cwd ?? process.cwd();
-  const existing = loadState({ cwd });
-  const next: NetworkState = existing ?? {
-    version: STATE_VERSION,
-    activeNetwork: 'undeployed',
-    wallets: {},
-    deployments: {},
-  };
-  next.wdollarAgentShieldedAddress = address;
-  next.wdollarAgentShieldedDomain = domain;
-  saveState(next, { cwd });
-}
-
-export function getWdollarAgentShielded(opts: FsOptions = {}): { address: string; domain: string } | null {
-  const state = loadState(opts);
-  if (state?.wdollarAgentShieldedAddress && state?.wdollarAgentShieldedDomain) {
-    return { address: state.wdollarAgentShieldedAddress, domain: state.wdollarAgentShieldedDomain };
-  }
-  return null;
-}
-
-export function saveWdollarAgentShieldedSecretKey(secretKeyHex: string, opts: FsOptions = {}): void {
-  const cwd = opts.cwd ?? process.cwd();
-  const existing = loadState({ cwd });
-  const next: NetworkState = existing ?? {
-    version: STATE_VERSION,
-    activeNetwork: 'undeployed',
-    wallets: {},
-    deployments: {},
-  };
-  next.wdollarAgentShieldedSecretKey = secretKeyHex;
-  saveState(next, { cwd });
-}
-
-export function getWdollarAgentShieldedSecretKey(opts: FsOptions = {}): string | null {
-  const state = loadState(opts);
-  return state?.wdollarAgentShieldedSecretKey ?? null;
+  return state?.swdaSecretKey ?? null;
 }
 
 export function setActiveNetwork(network: NetworkId, opts: FsOptions = {}): void {
