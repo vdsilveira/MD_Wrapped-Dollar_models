@@ -68,6 +68,12 @@ export interface CreateWalletOptions {
    * Defaults to true. Pass false to force a from-seed sync (used by tests).
    */
   restore?: boolean;
+  /**
+   * Skip calling wallet.start() which syncs all child wallets from the indexer.
+   * When true, caller must start individual wallets manually.
+   * Use this to avoid shielded wallet sync OOM on Preprod.
+   */
+  skipStart?: boolean;
   cwd?: string;
 }
 
@@ -153,9 +159,29 @@ export async function createWallet(opts: CreateWalletOptions): Promise<WalletCon
     },
   });
 
-  await wallet.start(shieldedSecretKeys, dustSecretKey);
+  if (!opts.skipStart) {
+    await wallet.start(shieldedSecretKeys, dustSecretKey);
+  }
 
   return { wallet, shieldedSecretKeys, dustSecretKey, unshieldedKeystore, restored };
+}
+
+/**
+ * Start only unshielded and dust child wallets, skipping shielded wallet sync entirely.
+ * Use after `createWallet({ skipStart: true })` to avoid the shielded-genesis OOM/timeout
+ * on Preprod.  The shielded wallet instance is still available (e.g. for
+ * `balanceTransaction`) but will operate on an empty coin set — that is fine for
+ * contract deployment, which creates new shielded outputs instead of spending existing ones.
+ */
+export async function startUnshieldedAndDust(
+  wallet: Awaited<ReturnType<typeof WalletFacade.init>>,
+  dustSecretKey: ledger.DustSecretKey,
+): Promise<void> {
+  const w = wallet as unknown as {
+    unshielded: { start(): Promise<void> };
+    dust: { start(key: ledger.DustSecretKey): Promise<void> };
+  };
+  await Promise.all([w.unshielded.start(), w.dust.start(dustSecretKey)]);
 }
 
 /**

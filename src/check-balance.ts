@@ -1,6 +1,7 @@
 /**
  * Check wallet balance on the local Midnight devnet
  */
+import 'dotenv/config';
 import { WebSocket } from 'ws';
 
 // Midnight SDK imports

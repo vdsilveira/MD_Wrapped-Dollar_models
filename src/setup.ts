@@ -24,11 +24,15 @@ async function main(): Promise<void> {
   run('docker', ['compose', 'up', '-d', '--wait', ...config.composeServices]);
 
   // 2. Compile the contract (network-agnostic).
-  run('npm', ['run', 'compile']);
+  //    Use --agent-shielded flag to deploy WDAS instead of basic WDollar.
+  const isAgentShielded = argv.includes('--agent-shielded');
+  const compileScript = isAgentShielded ? 'compile:agent-shielded' : 'compile';
+  run('npm', ['run', compileScript]);
 
-  // 3. Deploy. Forward --network so deploy.ts sees the same network.
+  // 3. Deploy. Forward --network so deploy sees the same network.
+  const deployScript = isAgentShielded ? 'deploy:agent-shielded' : 'deploy';
   const deployArgs = network === 'undeployed' ? [] : ['--', '--network', network];
-  run('npm', ['run', 'deploy', ...deployArgs]);
+  run('npm', ['run', deployScript, ...deployArgs]);
 }
 
 main().catch((e) => {

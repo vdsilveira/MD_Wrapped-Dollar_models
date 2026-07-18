@@ -1,13 +1,15 @@
 import 'dotenv/config';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { resolveNetwork, getOrCreateSeed, saveWdollarAgentShielded } from './network';
+import { resolveNetwork, getOrCreateSeed, saveWdollarAgentShielded, saveWdollarAgentShieldedSecretKey } from './network';
 import { createWallet, startUnshieldedAndDust, persistWalletState, unshieldedToken, type WalletContext } from './wallet';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
 import * as Rx from 'rxjs';
 import { Buffer } from 'buffer';
 import { getRandomValues } from 'node:crypto';
+import * as ledger from '@midnight-ntwrk/ledger-v8';
+
 
 import { deployContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
@@ -22,7 +24,58 @@ globalThis.WebSocket = WebSocket;
 
 const { network, config: networkConfig } = resolveNetwork();
 const SEED = getOrCreateSeed(network);
-const MIN_DUST_FOR_DEPLOY = 10_000_000n;
+
+const PROOFSTATION_URL = process.env.PROOFSTATION_URL;
+const PROOFSTATION_SESSION_TOKEN = process.env.PROOFSTATION_SESSION_TOKEN;
+
+if (!PROOFSTATION_URL || !PROOFSTATION_SESSION_TOKEN) {
+  console.error('\n  Set PROOFSTATION_URL and PROOFSTATION_SESSION_TOKEN in .env\n');
+  process.exit(1);
+}
+
+// ─── ProofStation Integration ─────────────────────────────────────────────────
+
+function isDustShortage(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return msg.includes('not enough dust') || msg.includes('insufficient funds') || msg.includes('could not balance dust');
+}
+
+/**
+ * Call ProofStation /balance-only — sends a proved transaction,
+ * receives back a DUST-sponsored transaction.
+ */
+async function proofStationBalanceOnly(provedTx: { serialize(): Uint8Array }): Promise<any> {
+  const txBytes = provedTx.serialize();
+
+  console.log('  Sending to ProofStation /balance-only...');
+  const res = await fetch(`${PROOFSTATION_URL}/balance-only`, {
+    method: 'POST',
+    headers: {
+      'x-session-token': PROOFSTATION_SESSION_TOKEN!,
+      'Content-Type': 'application/octet-stream',
+    },
+    body: txBytes as unknown as ArrayBuffer,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(`ProofStation /balance-only failed (${res.status}): ${JSON.stringify(err)}`);
+  }
+
+  const data = await res.json();
+  console.log(`  ProofStation txHash: ${data.txHash}`);
+  console.log(`  Dust cost: ${JSON.stringify(data.dustCost)}`);
+  console.log(`  Contract addresses: ${JSON.stringify(data.contractAddresses)}`);
+  console.log(`  Expires at: ${data.expiresAt}`);
+
+  const balancedHex = data.txBytes ?? data.tx;
+  if (!balancedHex) throw new Error(`ProofStation response missing tx data: ${JSON.stringify(Object.keys(data))}`);
+
+  const balancedBytes = new Uint8Array(balancedHex.match(/.{2}/g).map((b: string) => parseInt(b, 16)));
+  return (ledger as any).Transaction.deserialize('signature', 'proof', 'binding', balancedBytes);
+}
+
+// ─── End of ProofStation Integration ─────────────────────────────────────────
 
 async function waitForProofServer(maxAttempts = 60, delayMs = 2000): Promise<boolean> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -78,9 +131,6 @@ const compiledContract = CompiledContract.make('wdollar-agent-shielded', Wdollar
 async function createProviders(walletCtx: WalletContext) {
   const privateStatePassword = process.env.PRIVATE_STATE_PASSWORD?.trim() || 'Local-Devnet-Development-Placeholder-1';
 
-  // Derive public keys from ZswapSecretKeys WITHOUT requiring full wallet sync.
-  // state.shielded.coinPublicKey.toHexString() returns the same value as
-  // walletCtx.shieldedSecretKeys.coinPublicKey — the latter needs zero sync.
   const coinPubKeyHex = walletCtx.shieldedSecretKeys.coinPublicKey;
   const encPubKeyHex = walletCtx.shieldedSecretKeys.encryptionPublicKey;
   const coinPubKey = ShieldedCoinPublicKey.fromHexString(coinPubKeyHex);
@@ -89,28 +139,42 @@ async function createProviders(walletCtx: WalletContext) {
   const walletProvider = {
     getCoinPublicKey: () => coinPubKeyHex,
     getEncryptionPublicKey: () => encPubKeyHex,
-      async balanceTx(tx: any, ttl?: Date) {
-          const opts = { ttl: ttl ?? new Date(Date.now() + 30 * 60 * 1000) };
-          let recipe: any;
-          try {
-            recipe = await walletCtx.wallet.balanceUnboundTransaction(
-              tx,
-              { shieldedSecretKeys: walletCtx.shieldedSecretKeys, dustSecretKey: walletCtx.dustSecretKey },
-              { ...opts, tokenKindsToBalance: 'all' },
-            );
-          } catch {
-            // Shielded wallet not synced (skipStart) — balance only unshielded + dust.
-            recipe = await walletCtx.wallet.balanceUnboundTransaction(
-              tx,
-              { shieldedSecretKeys: walletCtx.shieldedSecretKeys, dustSecretKey: walletCtx.dustSecretKey },
-              { ...opts, tokenKindsToBalance: ['dust', 'unshielded'] },
-            );
-          }
-          const signedRecipe = await walletCtx.wallet.signRecipe(recipe, (payload) =>
-            walletCtx.unshieldedKeystore.signData(payload),
-          );
-          return walletCtx.wallet.finalizeRecipe(signedRecipe);
-        },
+    async balanceTx(tx: any, ttl?: Date) {
+      const opts = { ttl: ttl ?? new Date(Date.now() + 30 * 60 * 1000) };
+
+      // Step 1: Try normal balance with DUST (in case DUST is available)
+      try {
+        const recipe = await walletCtx.wallet.balanceUnboundTransaction(
+          tx,
+          { shieldedSecretKeys: walletCtx.shieldedSecretKeys, dustSecretKey: walletCtx.dustSecretKey },
+          { ...opts, tokenKindsToBalance: 'all' },
+        );
+        const signedRecipe = await walletCtx.wallet.signRecipe(recipe, (payload) =>
+          walletCtx.unshieldedKeystore.signData(payload),
+        );
+        return walletCtx.wallet.finalizeRecipe(signedRecipe);
+      } catch (e) {
+        if (!isDustShortage(e)) throw e;
+        // DUST shortage — fall through to ProofStation
+      }
+
+      // Step 2: Balance without DUST (only unshielded + shielded)
+      console.log('  DUST unavailable locally — using local proof + ProofStation /balance-only...');
+      const recipe = await walletCtx.wallet.balanceUnboundTransaction(
+        tx,
+        { shieldedSecretKeys: walletCtx.shieldedSecretKeys, dustSecretKey: walletCtx.dustSecretKey },
+        { ...opts, tokenKindsToBalance: ['unshielded', 'shielded'] },
+      );
+
+      // Step 3: Sign + finalize locally (proof server generates ZK proof)
+      const signedRecipe = await walletCtx.wallet.signRecipe(recipe, (payload) =>
+        walletCtx.unshieldedKeystore.signData(payload),
+      );
+      const finalizedTx = await walletCtx.wallet.finalizeRecipe(signedRecipe);
+
+      // Step 4: Send proved tx to ProofStation for DUST sponsorship
+      return proofStationBalanceOnly(finalizedTx);
+    },
     submitTx: (tx: any) => walletCtx.wallet.submitTransaction(tx) as any,
   };
 
@@ -153,10 +217,10 @@ async function createProviders(walletCtx: WalletContext) {
 
 async function main() {
   console.log('\n╔══════════════════════════════════════════════════════════════╗');
-  console.log(`║  Deploy WDA Shielded to ${network}`);
+  console.log(`║  Deploy WDA Shielded via ProofStation (${network})`);
   console.log('╚══════════════════════════════════════════════════════════════╝\n');
 
-  // Limpa lock residual do LevelDB (execução anterior pode deixar LOCK travado)
+  // Limpa lock residual do LevelDB
   const levelDbPath = path.resolve(process.cwd(), 'midnight-level-db');
   try { fs.rmSync(path.join(levelDbPath, 'LOCK'), { force: true }); } catch {}
 
@@ -164,7 +228,6 @@ async function main() {
 
   console.log('─── Wallet setup ───────────────────────────────────────────────\n');
 
-  // Create wallet WITHOUT starting child wallets — avoids ShieldedWallet genesis sync
   console.log('  Creating wallet (shielded sync disabled)...');
   const walletCtx = await createWallet({ network, networkConfig, seed, skipStart: true });
 
@@ -177,14 +240,14 @@ async function main() {
     console.log(`  1. Copy the address above`);
     console.log(`  2. Open the faucet URL in your browser`);
     console.log(`  3. Paste the address and request tNIGHT`);
-    console.log('  4. Return here — funds auto-detected\n');
+    console.log(`  4. Return here — funds auto-detected\n`);
   }
 
-  // Start only unshielded + dust wallets (shielded stays stopped — no genesis scan)
+  // Start only unshielded + dust wallets
   console.log('  Starting unshielded + dust wallets...');
   await startUnshieldedAndDust(walletCtx.wallet, walletCtx.dustSecretKey);
 
-  // Wait for unshielded sync (fast — no shielded blocks to scan)
+  // Wait for unshielded sync
   console.log('  Syncing unshielded wallet...\n');
   const SYNC_TIMEOUT_MS = network === 'undeployed' ? 30_000 : 300_000;
   const syncStart = Date.now();
@@ -207,7 +270,7 @@ async function main() {
     process.stdout.write('\r  ⚠ Unshielded sync timeout — continuing with polling.\n');
   }
 
-  // Read initial balance (unshielded state only — shielded is empty/default)
+  // Read initial balance
   let balance = 0n;
   try {
     const s = await Rx.firstValueFrom(walletCtx.wallet.state());
@@ -221,7 +284,7 @@ async function main() {
     process.exit(1);
   }
 
-  // Funding: poll state without requiring isSynced for non-undeployed
+  // Funding: poll state
   if (network !== 'undeployed' && networkConfig.faucet && balance === 0n) {
     console.log('  Waiting for tNIGHT (poll every 10s, up to 10 min)...\n');
     const timeoutMs = 600_000;
@@ -249,34 +312,12 @@ async function main() {
     }
   }
 
-  // --- DUST sync: skip to avoid OOM (full chain scan) ---
-  console.log('\n  Skipping DUST sync (full chain scan causes OOM)...');
-  try {
-    const dustState = await Promise.race([
-      walletCtx.wallet.dust.waitForSyncedState(),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000)),
-    ]);
-    if (dustState) {
-      const dustBalance = dustState.balance(new Date());
-      console.log(`  DUST synced. Balance: ${dustBalance.toLocaleString()} DUST\n`);
-    } else {
-      console.log('  ⚠ DUST sync timeout — proceeding without DUST confirmation.\n');
-    }
-  } catch {
-    console.log('  ⚠ DUST sync failed — proceeding without DUST.\n');
-  }
+  // --- DUST: skip sync (causes OOM) — ProofStation will handle DUST fees ---
+  console.log('\n  Skipping local DUST sync (ProofStation will sponsor fees)...\n');
 
-  console.log('─── Deploy Contract ────────────────────────────────────────────\n');
+  console.log('─── Deploy Contract (via ProofStation) ─────────────────────────\n');
 
-  console.log('  Checking proof server...');
-  const proofServerReady = await waitForProofServer();
-  if (!proofServerReady) {
-    console.log('\n  ❌ Proof server not responding.\n');
-    await walletCtx.wallet.stop();
-    process.exit(1);
-  }
-  process.stdout.write('\r  Proof server ready!                                 \n');
-
+  // No local proof server needed — ProofStation handles proving + DUST
   console.log('  Setting up providers...');
   const providers = await createProviders(walletCtx);
 
@@ -306,43 +347,29 @@ async function main() {
       const errCause = err?.cause?.message || err?.cause?.toString() || '';
       const fullError = `${errMsg} ${errCause}`;
 
-      const isDustShortage =
-        fullError.includes('Not enough Dust') ||
-        fullError.includes('Insufficient Funds') ||
-        fullError.includes('could not balance dust');
+      const isProofStationRetry =
+        fullError.includes('ProofStation') ||
+        fullError.includes('503') ||
+        fullError.includes('502') ||
+        fullError.includes('wallet still syncing');
 
-      if (!(isDustShortage && attempt === 1)) {
-        console.error(`\n  Attempt ${attempt} error: ${errMsg}`);
-        if (errCause && errCause !== errMsg) console.error(`  Cause: ${errCause}`);
-      }
+      const isTransient =
+        isProofStationRetry ||
+        fullError.includes('Failed to connect') ||
+        fullError.includes('ECONNREFUSED') ||
+        fullError.includes('timeout');
 
-      if (
-        !isDustShortage &&
-        (fullError.includes('Failed to connect to Proof Server') ||
-          fullError.includes('connect ECONNREFUSED 127.0.0.1:6300'))
-      ) {
-        console.log('  ❌ Proof server unreachable.\n');
+      console.error(`  Attempt ${attempt}/${MAX_RETRIES} error: ${errMsg}`);
+      if (errCause && errCause !== errMsg) console.error(`  Cause: ${errCause}`);
+
+      if (attempt < MAX_RETRIES && isTransient) {
+        const delay = isProofStationRetry ? 30_000 : RETRY_DELAY_MS;
+        console.log(`  Retrying in ${delay / 1000}s...`);
+        await new Promise((r) => setTimeout(r, delay));
+      } else {
+        console.error('\n  ❌ Non-retryable error or max retries exceeded.\n');
         await walletCtx.wallet.stop();
         process.exit(1);
-      }
-
-      if (isDustShortage) {
-        if (attempt < MAX_RETRIES) {
-          if (attempt === 1) {
-            console.log(`  Still generating DUST, retrying in ${RETRY_DELAY_MS / 1000}s...`);
-          } else {
-            const currentState = await Rx.firstValueFrom(walletCtx.wallet.state());
-            const dustBalance = currentState.dust?.balance(new Date()) ?? 0n;
-            console.log(`  ⏳ DUST balance: ${dustBalance.toLocaleString()} (attempt ${attempt}/${MAX_RETRIES}); retrying...`);
-          }
-          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-        } else {
-          console.log('  ❌ Not enough DUST after all retries');
-          await walletCtx.wallet.stop();
-          process.exit(1);
-        }
-      } else {
-        throw err;
       }
     }
   }
@@ -358,6 +385,7 @@ async function main() {
     contractAddress,
     Buffer.from(domainSep).toString('hex'),
   );
+  saveWdollarAgentShieldedSecretKey(Buffer.from(secretKey).toString('hex'));
   console.log('  Saved to .midnight-state.json\n');
 
   await persistWalletState(network, walletCtx);

@@ -39,6 +39,7 @@ export interface NetworkState {
   wdollarAgentAccountId?: string;
   wdollarAgentShieldedAddress?: string;
   wdollarAgentShieldedDomain?: string;
+  wdollarAgentShieldedSecretKey?: string;
 }
 
 export const STATE_FILE_NAME = '.midnight-state.json';
@@ -215,7 +216,13 @@ export function getOrCreateSeed(network: NetworkId, opts: SeedOptions = {}): str
   if (network === 'undeployed') return GENESIS_SEED;
 
   const fromEnv = env.MIDNIGHT_WALLET_SEED;
-  if (fromEnv) return fromEnv;
+  if (fromEnv) {
+    if (fromEnv.includes(' ')) {
+      const derived = crypto.pbkdf2Sync(fromEnv, 'mnemonic', 2048, 64, 'sha512');
+      return derived.toString('hex');
+    }
+    return fromEnv;
+  }
 
   const existing = loadState({ cwd });
   const persisted = existing?.wallets?.[network]?.seed;
@@ -367,6 +374,24 @@ export function getWdollarAgentShielded(opts: FsOptions = {}): { address: string
     return { address: state.wdollarAgentShieldedAddress, domain: state.wdollarAgentShieldedDomain };
   }
   return null;
+}
+
+export function saveWdollarAgentShieldedSecretKey(secretKeyHex: string, opts: FsOptions = {}): void {
+  const cwd = opts.cwd ?? process.cwd();
+  const existing = loadState({ cwd });
+  const next: NetworkState = existing ?? {
+    version: STATE_VERSION,
+    activeNetwork: 'undeployed',
+    wallets: {},
+    deployments: {},
+  };
+  next.wdollarAgentShieldedSecretKey = secretKeyHex;
+  saveState(next, { cwd });
+}
+
+export function getWdollarAgentShieldedSecretKey(opts: FsOptions = {}): string | null {
+  const state = loadState(opts);
+  return state?.wdollarAgentShieldedSecretKey ?? null;
 }
 
 export function setActiveNetwork(network: NetworkId, opts: FsOptions = {}): void {
